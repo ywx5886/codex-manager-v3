@@ -1,5 +1,5 @@
 [project]
-name = "codex-register-v3-single"
+name = "codex-manager-v3"
 version = "0.1.0"
 description = "ChatGPT headless browser auto-registration bot"
 requires-python = ">=3.11"

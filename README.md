@@ -1,4 +1,4 @@
-# codex-register-v3
+# codex-manager-v3
 <p align="center">
   <a href="https://linux.do" target="_blank">
     <img src="https://img.shields.io/badge/LINUX-DO-FFB003?style=for-the-badge&logo=linux&logoColor=white" alt="LINUX DO" />
@@ -72,7 +72,7 @@ OAuth 阶段会复用注册完成后的同一个浏览器会话 / Cookie；若 A
 ```powershell
 # 1. 克隆项目
 git clone <repo-url>
-cd codex-register-v3-single
+cd codex-manager-v3
 
 # 2. 安装依赖
 uv sync
@@ -412,7 +412,7 @@ socks5://user:pass@host:port
 ## 项目结构
 
 ```
-codex-register-v3-single/
+codex-manager-v3/
 ├── proxies.txt          # 代理列表
 ├── accounts.db          # SQLite 数据库
 ├── register.log         # 调试日志（10 MB 自动轮转，保留 7 天）
