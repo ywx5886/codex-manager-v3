@@ -71,8 +71,8 @@ OAuth 阶段会复用注册完成后的同一个浏览器会话 / Cookie；若 A
 
 ```powershell
 # 1. 克隆项目
-git clone <repo-url>
-cd codex-register-v3-single
+git clone https://github.com/ywx5886/codex-manager-v3.git
+cd codex-manager-v3
 
 # 2. 安装依赖
 uv sync
