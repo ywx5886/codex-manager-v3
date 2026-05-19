@@ -500,7 +500,7 @@ async def api_outlook_device_code(request: Request):
         try:
             detail = resp.json()
         except Exception:
-            detail = resp.text
+            detail = {"error": resp.text}
         raise HTTPException(resp.status_code, detail)
 
     data = resp.json()
@@ -561,7 +561,7 @@ async def api_outlook_device_token(request: Request):
     if err in _OUTLOOK_DEVICE_FAILED_ERRORS:
         return {"status": "failed", "error": err, "error_description": data.get("error_description", "")}
 
-    detail = data or resp.text
+    detail = data or {"error": resp.text}
     raise HTTPException(resp.status_code, detail)
 
 

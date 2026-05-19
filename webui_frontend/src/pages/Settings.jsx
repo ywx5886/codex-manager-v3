@@ -674,6 +674,7 @@ const EMPTY_OUTLOOK = {
 const OUTLOOK_SCOPE_GRAPH = 'https://graph.microsoft.com/Mail.Read offline_access'
 const OUTLOOK_SCOPE_IMAP = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access'
 const OUTLOOK_MIN_POLL_INTERVAL_SEC = 3
+const OUTLOOK_DEFAULT_POLL_INTERVAL_SEC = 5
 const OUTLOOK_SUCCESS_CLOSE_DELAY_MS = 500
 
 const OUTLOOK_IMPORT_HINT = `# 四短线分隔（推荐，每行一条）：
@@ -898,11 +899,11 @@ function OutlookAuthModal({ auth, onClose }) {
   const failed = auth.status === 'failed'
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
           <h3 className="font-semibold text-gray-800">Outlook 设备码授权</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+          <button onClick={onClose} aria-label="关闭授权对话框" className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
         </div>
         <div className="p-6 space-y-4">
           {auth.message && (
@@ -953,6 +954,7 @@ function TabOutlook() {
   const [auth, setAuth] = useState(null)
   const authRef = useRef(null)
   const pollTimerRef = useRef(null)
+  const successTimerRef = useRef(null)
   const pollBusyRef = useRef(false)
   const { run, registerSave } = useSave()
   useEffect(() => { authRef.current = auth }, [auth])
@@ -979,7 +981,9 @@ function TabOutlook() {
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+    if (successTimerRef.current) clearTimeout(successTimerRef.current)
     pollTimerRef.current = null
+    successTimerRef.current = null
     pollBusyRef.current = false
   }, [])
   useEffect(() => () => stopPolling(), [stopPolling])
@@ -1014,7 +1018,7 @@ function TabOutlook() {
         stopPolling()
         setAuth(a => a ? { ...a, status: 'success' } : a)
         if (updated) await run(() => api.saveSection('mail.outlook', updated))
-        setTimeout(() => setAuth(null), OUTLOOK_SUCCESS_CLOSE_DELAY_MS)
+        successTimerRef.current = setTimeout(() => setAuth(null), OUTLOOK_SUCCESS_CLOSE_DELAY_MS)
         return
       }
       if (result.status === 'failed') {
@@ -1053,7 +1057,7 @@ function TabOutlook() {
       }
       setAuth(session)
       stopPolling()
-      const intervalSec = Math.max(OUTLOOK_MIN_POLL_INTERVAL_SEC, Number(device.interval || 5))
+      const intervalSec = Math.max(OUTLOOK_MIN_POLL_INTERVAL_SEC, Number(device.interval || OUTLOOK_DEFAULT_POLL_INTERVAL_SEC))
       pollTimerRef.current = setInterval(() => { pollToken(session) }, intervalSec * 1000)
       setTimeout(() => { pollToken(session) }, 1000)
     } catch (e) {
