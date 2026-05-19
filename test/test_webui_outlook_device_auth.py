@@ -21,6 +21,7 @@ class _MockResponse:
 class _MockAsyncClient:
     def __init__(self, responses: list[_MockResponse]):
         self._responses = responses
+        self.calls: list[tuple[str, dict | None]] = []
 
     async def __aenter__(self):
         return self
@@ -29,6 +30,7 @@ class _MockAsyncClient:
         return False
 
     async def post(self, url, data=None):
+        self.calls.append((url, data))
         return self._responses.pop(0)
 
 
@@ -56,6 +58,8 @@ class OutlookDeviceAuthApiTests(unittest.IsolatedAsyncioTestCase):
         data = resp.json()
         self.assertEqual(data["user_code"], "ABCDEF")
         self.assertEqual(data["device_code"], "dev-code")
+        self.assertIn("/consumers/oauth2/v2.0/devicecode", mocked.calls[0][0])
+        self.assertEqual(mocked.calls[0][1]["client_id"], "cid")
 
     async def test_device_token_pending(self):
         mocked = _MockAsyncClient([
@@ -76,6 +80,8 @@ class OutlookDeviceAuthApiTests(unittest.IsolatedAsyncioTestCase):
         data = resp.json()
         self.assertEqual(data["status"], "pending")
         self.assertEqual(data["error"], "authorization_pending")
+        self.assertIn("/consumers/oauth2/v2.0/token", mocked.calls[0][0])
+        self.assertEqual(mocked.calls[0][1]["device_code"], "dc")
 
     async def test_device_token_success(self):
         mocked = _MockAsyncClient([
@@ -99,6 +105,8 @@ class OutlookDeviceAuthApiTests(unittest.IsolatedAsyncioTestCase):
         data = resp.json()
         self.assertEqual(data["status"], "success")
         self.assertEqual(data["refresh_token"], "refresh")
+        self.assertIn("/consumers/oauth2/v2.0/token", mocked.calls[0][0])
+        self.assertEqual(mocked.calls[0][1]["grant_type"], "urn:ietf:params:oauth:grant-type:device_code")
 
 
 if __name__ == "__main__":

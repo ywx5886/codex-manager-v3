@@ -673,6 +673,8 @@ const EMPTY_OUTLOOK = {
 }
 const OUTLOOK_SCOPE_GRAPH = 'https://graph.microsoft.com/Mail.Read offline_access'
 const OUTLOOK_SCOPE_IMAP = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access'
+const OUTLOOK_MIN_POLL_INTERVAL_SEC = 3
+const OUTLOOK_SUCCESS_CLOSE_DELAY_MS = 500
 
 const OUTLOOK_IMPORT_HINT = `# 四短线分隔（推荐，每行一条）：
 邮箱----密码----Client Id----刷新令牌
@@ -1012,7 +1014,7 @@ function TabOutlook() {
         stopPolling()
         setAuth(a => a ? { ...a, status: 'success' } : a)
         if (updated) await run(() => api.saveSection('mail.outlook', updated))
-        setTimeout(() => setAuth(null), 500)
+        setTimeout(() => setAuth(null), OUTLOOK_SUCCESS_CLOSE_DELAY_MS)
         return
       }
       if (result.status === 'failed') {
@@ -1051,7 +1053,7 @@ function TabOutlook() {
       }
       setAuth(session)
       stopPolling()
-      const intervalSec = Math.max(3, Number(device.interval || 5))
+      const intervalSec = Math.max(OUTLOOK_MIN_POLL_INTERVAL_SEC, Number(device.interval || 5))
       pollTimerRef.current = setInterval(() => { pollToken(session) }, intervalSec * 1000)
       setTimeout(() => { pollToken(session) }, 1000)
     } catch (e) {

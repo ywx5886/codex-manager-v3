@@ -44,7 +44,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ChatGPT Register WebUI", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 _OUTLOOK_SCOPE_GRAPH = "https://graph.microsoft.com/Mail.Read offline_access"
-_OUTLOOK_SCOPE_IMAP  = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+_OUTLOOK_API_TIMEOUT_SEC = 30
+_OUTLOOK_DEVICE_PENDING_ERRORS = {"authorization_pending", "slow_down"}
+_OUTLOOK_DEVICE_FAILED_ERRORS = {"authorization_declined", "bad_verification_code", "expired_token"}
 
 
 # ── Job registry ──────────────────────────────────────────────────────────
@@ -471,7 +473,7 @@ async def api_import_outlook_save(request: Request):
 
 
 def _outlook_client_kwargs(proxy: str = "") -> dict:
-    kwargs: dict[str, Any] = {"timeout": 30, "trust_env": False}
+    kwargs: dict[str, Any] = {"timeout": _OUTLOOK_API_TIMEOUT_SEC, "trust_env": False}
     if proxy:
         kwargs["proxy"] = proxy
     return kwargs
@@ -554,9 +556,9 @@ async def api_outlook_device_token(request: Request):
         }
 
     err = str(data.get("error", "")).lower()
-    if err in {"authorization_pending", "slow_down"}:
+    if err in _OUTLOOK_DEVICE_PENDING_ERRORS:
         return {"status": "pending", "error": err, "error_description": data.get("error_description", "")}
-    if err in {"authorization_declined", "bad_verification_code", "expired_token"}:
+    if err in _OUTLOOK_DEVICE_FAILED_ERRORS:
         return {"status": "failed", "error": err, "error_description": data.get("error_description", "")}
 
     detail = data or resp.text
