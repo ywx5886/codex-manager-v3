@@ -52,6 +52,10 @@ const api = {
   saveImapAccounts:     (accounts) => req('POST', '/mail/import/imap/save',     { accounts }),
   parseOutlookAccounts: (text)     => req('POST', '/mail/import/outlook',       { text }),
   saveOutlookAccounts:  (accounts) => req('POST', '/mail/import/outlook/save',  { accounts }),
+  getOutlookDeviceCode: (client_id, tenant_id = 'consumers', scope = 'https://graph.microsoft.com/Mail.Read offline_access', proxy = '') =>
+    req('POST', '/mail/outlook/device-code', { client_id, tenant_id, scope, proxy }),
+  pollOutlookDeviceToken: (client_id, tenant_id = 'consumers', device_code = '', scope = '', proxy = '') =>
+    req('POST', '/mail/outlook/device-token', { client_id, tenant_id, device_code, scope, proxy }),
 
   // ── Accounts ─────────────────────────────────────────────────────────
   getAccounts:        (params = {}) => req('GET',    '/accounts?' + new URLSearchParams(params)),
@@ -97,4 +101,3 @@ const api = {
 }
 
 export default api
-

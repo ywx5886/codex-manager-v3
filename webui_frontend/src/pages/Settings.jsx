@@ -671,6 +671,11 @@ const EMPTY_OUTLOOK = {
   email: '', password: '', client_id: '', tenant_id: 'consumers',
   refresh_token: '', access_token: '', fetch_method: 'graph', proxy: '',
 }
+const OUTLOOK_SCOPE_GRAPH = 'https://graph.microsoft.com/Mail.Read offline_access'
+const OUTLOOK_SCOPE_IMAP = 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access'
+const OUTLOOK_MIN_POLL_INTERVAL_SEC = 3
+const OUTLOOK_DEFAULT_POLL_INTERVAL_SEC = 5
+const OUTLOOK_SUCCESS_CLOSE_DELAY_MS = 500
 
 const OUTLOOK_IMPORT_HINT = `# 四短线分隔（推荐，每行一条）：
 邮箱----密码----Client Id----刷新令牌
@@ -887,6 +892,58 @@ function OutlookImportModal({ onImport, onClose }) {
   )
 }
 
+function OutlookAuthModal({ auth, onClose }) {
+  if (!auth) return null
+  const pending = auth.status === 'pending'
+  const success = auth.status === 'success'
+  const failed = auth.status === 'failed'
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" role="dialog" aria-modal="true">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-semibold text-gray-800">Outlook 设备码授权</h3>
+          <button onClick={onClose} aria-label="关闭授权对话框" className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          {auth.message && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800 whitespace-pre-wrap leading-relaxed">
+              {auth.message}
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="bg-gray-50 rounded-lg p-2">
+              <div className="text-gray-500">验证码</div>
+              <div className="font-mono text-gray-800">{auth.user_code || '—'}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-2">
+              <div className="text-gray-500">登录地址</div>
+              <a href={auth.verification_uri} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline break-all">
+                {auth.verification_uri || '—'}
+              </a>
+            </div>
+          </div>
+
+          <div className={`text-sm rounded-lg px-3 py-2 border flex items-center gap-2 ${
+            success ? 'bg-green-50 border-green-200 text-green-700'
+              : failed ? 'bg-red-50 border-red-200 text-red-700'
+              : 'bg-amber-50 border-amber-200 text-amber-700'
+          }`}>
+            {pending && <Spinner />}
+            {success && <span>✅</span>}
+            {failed && <span>⚠️</span>}
+            <span>
+              {success ? '授权成功，Token 已写入并保存。'
+                : failed ? (auth.error || '授权失败，请重试。')
+                : '等待微软授权完成，后台轮询中…'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Tab: Outlook ──────────────────────────────────────────────────────────
 
 function TabOutlook() {
@@ -894,7 +951,14 @@ function TabOutlook() {
   const [showImport, setShowImport] = useState(false)
   const [editIdx, setEditIdx] = useState(null)
   const [sel, setSel] = useState(new Set())    // Set<index>
+  const [auth, setAuth] = useState(null)
+  const authRef = useRef(null)
+  const pollTimerRef = useRef(null)
+  const initialPollTimerRef = useRef(null)
+  const successTimerRef = useRef(null)
+  const pollBusyRef = useRef(false)
   const { run, registerSave } = useSave()
+  useEffect(() => { authRef.current = auth }, [auth])
 
   const load = useCallback(() => {
     api.getSection('mail.outlook').then(d => { setAccounts(Array.isArray(d) ? d : []); setSel(new Set()) }).catch(() => {})
@@ -915,6 +979,97 @@ function TabOutlook() {
   const save = useCallback(() => run(() => api.saveSection('mail.outlook', accounts)), [run, accounts])
   useEffect(() => { registerSave(save) }, [save, registerSave])
   const handleImport = async (parsed) => { await api.saveOutlookAccounts(parsed); load() }
+
+  const stopPolling = useCallback(() => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+    if (initialPollTimerRef.current) clearTimeout(initialPollTimerRef.current)
+    if (successTimerRef.current) clearTimeout(successTimerRef.current)
+    pollTimerRef.current = null
+    initialPollTimerRef.current = null
+    successTimerRef.current = null
+    pollBusyRef.current = false
+  }, [])
+  useEffect(() => () => stopPolling(), [stopPolling])
+
+  const closeAuthModal = useCallback(() => {
+    stopPolling()
+    setAuth(null)
+  }, [stopPolling])
+
+  const pollToken = useCallback(async (session) => {
+    if (!session || pollBusyRef.current) return
+    if (authRef.current?.device_code !== session.device_code || authRef.current?.status !== 'pending') {
+      console.debug('[OutlookAuth] Poll skipped due to stale or non-pending session')
+      return
+    }
+    pollBusyRef.current = true
+    try {
+      const result = await api.pollOutlookDeviceToken(
+        session.client_id,
+        session.tenant_id,
+        session.device_code,
+        session.scope,
+        session.proxy || '',
+      )
+      if (result.status === 'success' && result.refresh_token) {
+        let updated = null
+        setAccounts(prev => {
+          updated = prev.map((acc, idx) => idx === session.idx ? {
+            ...acc,
+            refresh_token: result.refresh_token || acc.refresh_token,
+            access_token: result.access_token || acc.access_token,
+          } : acc)
+          return updated
+        })
+        stopPolling()
+        setAuth(a => a ? { ...a, status: 'success' } : a)
+        if (updated) await run(() => api.saveSection('mail.outlook', updated))
+        successTimerRef.current = setTimeout(() => setAuth(null), OUTLOOK_SUCCESS_CLOSE_DELAY_MS)
+        return
+      }
+      if (result.status === 'failed') {
+        stopPolling()
+        setAuth(a => a ? { ...a, status: 'failed', error: result.error_description || result.error || '授权失败' } : a)
+      }
+    } catch (e) {
+      setAuth(a => a ? { ...a, error: e.message || String(e) } : a)
+    } finally {
+      pollBusyRef.current = false
+    }
+  }, [run, stopPolling])
+
+  const startAuthorize = async (acc, idx) => {
+    if (!acc.client_id) {
+      window.alert('请先填写 client_id')
+      return
+    }
+    const scope = (acc.fetch_method || 'graph') === 'imap' ? OUTLOOK_SCOPE_IMAP : OUTLOOK_SCOPE_GRAPH
+    const tenant = acc.tenant_id || 'consumers'
+    const proxy = acc.proxy || ''
+    try {
+      const device = await api.getOutlookDeviceCode(acc.client_id, tenant, scope, proxy)
+      const session = {
+        idx,
+        client_id: acc.client_id,
+        tenant_id: tenant,
+        device_code: device.device_code,
+        user_code: device.user_code,
+        verification_uri: device.verification_uri,
+        message: device.message,
+        status: 'pending',
+        scope,
+        proxy,
+        error: '',
+      }
+      setAuth(session)
+      stopPolling()
+      const intervalSec = Math.max(OUTLOOK_MIN_POLL_INTERVAL_SEC, Number(device.interval) || OUTLOOK_DEFAULT_POLL_INTERVAL_SEC)
+      pollTimerRef.current = setInterval(() => { pollToken(session) }, intervalSec * 1000)
+      initialPollTimerRef.current = setTimeout(() => { pollToken(session) }, 1000)
+    } catch (e) {
+      window.alert(`获取授权码失败: ${e.message || e}`)
+    }
+  }
 
   // Bulk selection
   const allSel  = accounts.length > 0 && accounts.every((_, i) => sel.has(i))
@@ -1026,6 +1181,16 @@ function TabOutlook() {
               {/* 操作 */}
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
+                  onClick={() => startAuthorize(acc, i)}
+                  className={`text-xs px-2.5 py-1 rounded border transition-colors ${
+                    acc.refresh_token
+                      ? 'text-purple-600 border-purple-200 hover:border-purple-300 hover:text-purple-700'
+                      : 'text-white bg-blue-600 border-blue-600 hover:bg-blue-700'
+                  }`}
+                >
+                  {auth?.idx === i && auth.status === 'pending' ? '授权中…' : '获取授权'}
+                </button>
+                <button
                   onClick={() => setEditIdx(i)}
                   className="text-xs text-blue-500 hover:text-blue-700 px-2.5 py-1 rounded border border-blue-100 hover:border-blue-300 transition-colors"
                 >
@@ -1053,6 +1218,7 @@ function TabOutlook() {
           onClose={() => setEditIdx(null)}
         />
       )}
+      <OutlookAuthModal auth={auth} onClose={closeAuthModal} />
     </div>
   )
 }
