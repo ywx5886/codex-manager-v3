@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -41,6 +42,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ChatGPT Register WebUI", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+_OUTLOOK_SCOPE_GRAPH = "https://graph.microsoft.com/Mail.Read offline_access"
+_OUTLOOK_SCOPE_IMAP  = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 
 
 # ── Job registry ──────────────────────────────────────────────────────────
@@ -464,6 +468,99 @@ async def api_import_outlook_save(request: Request):
     added = [a for a in new_acc if a.get("email", "").lower() not in existing_emails]
     await settings_db.set_section("mail.outlook", existing + added)
     return {"added": len(added), "total": len(existing) + len(added)}
+
+
+def _outlook_client_kwargs(proxy: str = "") -> dict:
+    kwargs: dict[str, Any] = {"timeout": 30, "trust_env": False}
+    if proxy:
+        kwargs["proxy"] = proxy
+    return kwargs
+
+
+@app.post("/api/mail/outlook/device-code")
+async def api_outlook_device_code(request: Request):
+    body = await request.json()
+    client_id = (body.get("client_id") or "").strip()
+    tenant_id = (body.get("tenant_id") or "consumers").strip() or "consumers"
+    scope = (body.get("scope") or "").strip() or _OUTLOOK_SCOPE_GRAPH
+    proxy = (body.get("proxy") or "").strip()
+    if not client_id:
+        raise HTTPException(400, "client_id is required")
+
+    url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode"
+    async with httpx.AsyncClient(**_outlook_client_kwargs(proxy)) as client:
+        try:
+            resp = await client.post(url, data={"client_id": client_id, "scope": scope})
+        except Exception as exc:
+            raise HTTPException(502, f"Failed to request device code: {exc}")
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise HTTPException(resp.status_code, detail)
+
+    data = resp.json()
+    return {
+        "user_code": data.get("user_code", ""),
+        "device_code": data.get("device_code", ""),
+        "verification_uri": data.get("verification_uri", ""),
+        "message": data.get("message", ""),
+        "expires_in": data.get("expires_in"),
+        "interval": data.get("interval"),
+    }
+
+
+@app.post("/api/mail/outlook/device-token")
+async def api_outlook_device_token(request: Request):
+    body = await request.json()
+    client_id = (body.get("client_id") or "").strip()
+    tenant_id = (body.get("tenant_id") or "consumers").strip() or "consumers"
+    device_code = (body.get("device_code") or "").strip()
+    scope = (body.get("scope") or "").strip()
+    proxy = (body.get("proxy") or "").strip()
+    if not client_id or not device_code:
+        raise HTTPException(400, "client_id and device_code are required")
+
+    payload = {
+        "client_id": client_id,
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": device_code,
+    }
+    if scope:
+        payload["scope"] = scope
+
+    url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    async with httpx.AsyncClient(**_outlook_client_kwargs(proxy)) as client:
+        try:
+            resp = await client.post(url, data=payload)
+        except Exception as exc:
+            raise HTTPException(502, f"Failed to request device token: {exc}")
+
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+
+    if resp.status_code < 400:
+        return {
+            "status": "success",
+            "refresh_token": data.get("refresh_token", ""),
+            "access_token": data.get("access_token", ""),
+            "expires_in": data.get("expires_in"),
+            "scope": data.get("scope", ""),
+            "token_type": data.get("token_type", ""),
+        }
+
+    err = str(data.get("error", "")).lower()
+    if err in {"authorization_pending", "slow_down"}:
+        return {"status": "pending", "error": err, "error_description": data.get("error_description", "")}
+    if err in {"authorization_declined", "bad_verification_code", "expired_token"}:
+        return {"status": "failed", "error": err, "error_description": data.get("error_description", "")}
+
+    detail = data or resp.text
+    raise HTTPException(resp.status_code, detail)
 
 
 # ── Accounts API ──────────────────────────────────────────────────────────
