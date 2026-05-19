@@ -543,7 +543,7 @@ async def api_outlook_device_token(request: Request):
     try:
         data = resp.json()
     except Exception:
-        data = {}
+        data = None
 
     if resp.status_code < 400:
         return {
@@ -561,7 +561,7 @@ async def api_outlook_device_token(request: Request):
     if err in _OUTLOOK_DEVICE_FAILED_ERRORS:
         return {"status": "failed", "error": err, "error_description": data.get("error_description", "")}
 
-    detail = data or {"error": resp.text}
+    detail = data if data is not None else {"error": resp.text}
     raise HTTPException(resp.status_code, detail)
 
 

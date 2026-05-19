@@ -954,6 +954,7 @@ function TabOutlook() {
   const [auth, setAuth] = useState(null)
   const authRef = useRef(null)
   const pollTimerRef = useRef(null)
+  const initialPollTimerRef = useRef(null)
   const successTimerRef = useRef(null)
   const pollBusyRef = useRef(false)
   const { run, registerSave } = useSave()
@@ -981,8 +982,10 @@ function TabOutlook() {
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current) clearInterval(pollTimerRef.current)
+    if (initialPollTimerRef.current) clearTimeout(initialPollTimerRef.current)
     if (successTimerRef.current) clearTimeout(successTimerRef.current)
     pollTimerRef.current = null
+    initialPollTimerRef.current = null
     successTimerRef.current = null
     pollBusyRef.current = false
   }, [])
@@ -995,7 +998,10 @@ function TabOutlook() {
 
   const pollToken = useCallback(async (session) => {
     if (!session || pollBusyRef.current) return
-    if (authRef.current?.device_code !== session.device_code || authRef.current?.status !== 'pending') return
+    if (authRef.current?.device_code !== session.device_code || authRef.current?.status !== 'pending') {
+      console.debug('[OutlookAuth] Poll skipped due to stale or non-pending session')
+      return
+    }
     pollBusyRef.current = true
     try {
       const result = await api.pollOutlookDeviceToken(
@@ -1057,9 +1063,9 @@ function TabOutlook() {
       }
       setAuth(session)
       stopPolling()
-      const intervalSec = Math.max(OUTLOOK_MIN_POLL_INTERVAL_SEC, Number(device.interval || OUTLOOK_DEFAULT_POLL_INTERVAL_SEC))
+      const intervalSec = Math.max(OUTLOOK_MIN_POLL_INTERVAL_SEC, Number(device.interval) || OUTLOOK_DEFAULT_POLL_INTERVAL_SEC)
       pollTimerRef.current = setInterval(() => { pollToken(session) }, intervalSec * 1000)
-      setTimeout(() => { pollToken(session) }, 1000)
+      initialPollTimerRef.current = setTimeout(() => { pollToken(session) }, 1000)
     } catch (e) {
       window.alert(`获取授权码失败: ${e.message || e}`)
     }
